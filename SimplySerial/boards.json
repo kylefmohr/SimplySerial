@@ -64,6 +64,14 @@
         {
             "vid": "32BD",
             "make": "Alorium Technology, LLC"
+        },
+        {
+            "vid": "1A86",
+            "make": "CH340 Serial Device"
+        },
+        {
+            "vid": "4292",
+            "make": "Silicon Labs CP210x Serial Device"
         }
     ],
     "boards": [
