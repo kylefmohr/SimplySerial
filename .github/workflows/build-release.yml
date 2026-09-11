@@ -80,7 +80,7 @@ jobs:
 
       # Builds SimplySerial_<version>_user_setup.msi (per-user, no admin rights).
       - name: Build user installer
-        uses: caphyon/advinst-github-action@v2
+        uses: caphyon/advinst-github-action@v2.0.3
         with:
           advinst-license: ${{ secrets.ADVINST_LICENSE_KEY }}
           aip-path: ${{ github.workspace }}\Installer\Installer.aip
@@ -92,7 +92,7 @@ jobs:
 
       # Builds SimplySerial_<version>_system_setup.msi (all users, needs admin).
       - name: Build system installer
-        uses: caphyon/advinst-github-action@v2
+        uses: caphyon/advinst-github-action@v2.0.3
         with:
           advinst-license: ${{ secrets.ADVINST_LICENSE_KEY }}
           aip-path: ${{ github.workspace }}\Installer-System\Installer-System.aip
