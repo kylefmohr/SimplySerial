@@ -1,0 +1,133 @@
+name: Build and Release
+
+# Triggered by pushing a version tag (e.g. `v0.9.1`) or manually from the
+# Actions tab. On manual runs a version must be supplied and the tag/release
+# will be created for you.
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build and release, without the leading 'v' (e.g. 0.9.1)"
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark the GitHub release as a pre-release'
+        required: false
+        type: boolean
+        default: false
+
+# Needed for softprops/action-gh-release to create the release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build installers and publish release
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $version = '${{ github.ref_name }}' -replace '^v', ''
+          } else {
+            $version = '${{ inputs.version }}' -replace '^v', ''
+          }
+          $version = $version.Trim()
+
+          if ($version -notmatch '^\d+(\.\d+){0,3}$') {
+            throw "Invalid version '$version'. Expected a numeric version such as 1.2.3."
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Building SimplySerial $version (tag v$version)"
+
+      - name: Stamp version into AssemblyInfo
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $path = 'SimplySerial/Properties/AssemblyInfo.cs'
+          $content = Get-Content -Path $path -Raw
+          $content = $content -replace '\[assembly: AssemblyVersion\("[^"]*"\)\]', "[assembly: AssemblyVersion(`"$version`")]"
+          $content = $content -replace '\[assembly: AssemblyFileVersion\("[^"]*"\)\]', "[assembly: AssemblyFileVersion(`"$version`")]"
+          Set-Content -Path $path -Value $content
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v4
+
+      - name: Restore NuGet packages
+        run: nuget restore SimplySerial\packages.config -PackagesDirectory SimplySerial\packages -NonInteractive
+
+      - name: Build SimplySerial (Release, AnyCPU)
+        run: msbuild SimplySerial\SimplySerial.csproj /p:Configuration=Release /p:Platform=AnyCPU /m /v:minimal
+
+      - name: Create output directory
+        run: New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+      # Builds SimplySerial_<version>_user_setup.msi (per-user, no admin rights).
+      - name: Build user installer
+        uses: caphyon/advinst-github-action@v2
+        with:
+          advinst-license: ${{ secrets.ADVINST_LICENSE_KEY }}
+          aip-path: ${{ github.workspace }}\Installer\Installer.aip
+          aip-build-name: DefaultBuild
+          aip-package-name: SimplySerial_${{ steps.version.outputs.version }}_user_setup.msi
+          aip-output-dir: ${{ github.workspace }}\dist
+          aip-commands: |
+            SetVersion ${{ steps.version.outputs.version }}
+
+      # Builds SimplySerial_<version>_system_setup.msi (all users, needs admin).
+      - name: Build system installer
+        uses: caphyon/advinst-github-action@v2
+        with:
+          advinst-license: ${{ secrets.ADVINST_LICENSE_KEY }}
+          aip-path: ${{ github.workspace }}\Installer-System\Installer-System.aip
+          aip-build-name: DefaultBuild
+          aip-package-name: SimplySerial_${{ steps.version.outputs.version }}_system_setup.msi
+          aip-output-dir: ${{ github.workspace }}\dist
+          aip-commands: |
+            SetVersion ${{ steps.version.outputs.version }}
+
+      # The csproj post-build event already produces a version-less standalone
+      # zip; copy it into dist/ with the version in the file name.
+      - name: Collect standalone zip
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          Copy-Item 'SimplySerial\bin\Release\SimplySerial_standalone.zip' "dist\SimplySerial_${version}_standalone.zip"
+
+      - name: List release assets
+        run: Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimplySerial-${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: SimplySerial ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ inputs.prerelease == true }}
+          files: |
+            dist/*.msi
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
